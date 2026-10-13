@@ -10,13 +10,17 @@ import 'sand_sim.dart';
 
 /// Full-screen falling-sand canvas.
 class SandView extends StatefulWidget {
-  const SandView({super.key, required this.controller, this.floorInset = 0});
+  const SandView({super.key, required this.controller, this.floorInset = 0, this.ledge});
 
   final SandController controller;
 
   /// Height (logical px) at the bottom of the canvas that acts as solid
   /// ground, so grains come to rest on top of the tool dock.
   final double floorInset;
+
+  /// Screen rect (logical px) of a floating control that grains should rest
+  /// on and pour off, such as the tool bar.
+  final Rect? ledge;
 
   /// Grid columns; rows follow from the screen's aspect ratio.
   static const int columns = 150;
@@ -65,12 +69,24 @@ class _SandViewState extends State<SandView> with SingleTickerProviderStateMixin
     if (sim == null || _size.isEmpty) return;
     final visible = (_size.height - widget.floorInset) / _size.height;
     sim.floorRow = (visible * sim.height).floor();
+    final l = widget.ledge;
+    if (l == null) {
+      sim.setLedge(0, 0, -1, -1);
+    } else {
+      final sx = sim.width / _size.width, sy = sim.height / _size.height;
+      sim.setLedge(
+        (l.left * sx).round(),
+        (l.top * sy).round(),
+        (l.right * sx).round() - 1,
+        (l.bottom * sy).round() - 1,
+      );
+    }
   }
 
   @override
   void didUpdateWidget(SandView old) {
     super.didUpdateWidget(old);
-    if (old.floorInset != widget.floorInset) _applyFloor();
+    if (old.floorInset != widget.floorInset || old.ledge != widget.ledge) _applyFloor();
   }
 
   void _onFrame(int steps) {

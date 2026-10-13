@@ -22,15 +22,20 @@ Tool changes trigger light haptics.
 
 ### Look and feel
 
-- **Intro:** the word *Tactile* rains down out of sand grains, holds for a beat, then
-  crumbles into the live sand simulation. Tap to skip.
-- **Frosted glass chrome:** the panels blur and saturate whatever is behind them, with a
-  light-catching edge. They share one backdrop pass (`BackdropGroup`) to stay cheap.
-- **Accent colour** follows the selected material, palette or cloth tool, and tints the
-  dock's glow, sliders and mode switcher.
-- The glass dock acts as the ground: sand piles up and cloth comes to rest on top of it.
-- Glossy orb swatches, press-to-shrink buttons, a morphing mode switcher, a first-touch
-  hint, and a depth gradient with vignette behind every canvas.
+The interface follows Apple's iOS 26 *Liquid Glass* language:
+
+- **Clear glass controls** float over a full-screen canvas. Each has a light blur, boosted
+  saturation, a bright rim that catches the light from the top left, and a soft sheen.
+  They share one backdrop pass (`BackdropGroup`) to stay cheap.
+- **Lens bars:** the mode switcher and the tool bars slide a glass lens, with a small
+  spring, behind the selected item. In sand mode the lens is tinted with the chosen
+  material, and a small label pops up whenever you switch.
+- **Fill sliders** like Control Center's sit on the screen edges for brush size and,
+  in fluid mode, swirl.
+- **The tool bar is a physical ledge:** sand piles on top of it and pours off its
+  rounded ends.
+- **Intro:** the word *Tactile* rains down out of sand grains, then crumbles onto the
+  tool bar. Tap to skip.
 
 ## Run it
 
@@ -46,8 +51,8 @@ Requires Flutter 3.38+ (developed on 3.47). iOS 15+, Android minSdk from Flutter
 ```
 lib/
   main.dart                  entry point (portrait, edge-to-edge)
-  src/app.dart               shell: mode switcher, glass docks, hint, share
-  src/ui/                    glass panels and orbs, shared backdrop, sand-title intro
+  src/app.dart               shell: lens bars, fill sliders, tool label, hint, share
+  src/ui/                    liquid glass, lens and orbs; shared backdrop; sand-title intro
   src/controllers.dart       per-mode settings shared by the toolbar and views
   src/common/                fixed-step loop, pixel-buffer → ui.Image upload, multi-touch input, RNG
   src/sand/                  SandSim (pure Dart) + SandView

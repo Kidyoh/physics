@@ -170,4 +170,27 @@ void main() {
     expect(sim.pixels[0] >> 24, 0);
     expect(sim.pixels[1], isNot(sim.pixels[2]), reason: 'top wall cell is lit');
   });
+
+  test('grains pile on a ledge and pour off its ends', () {
+    final sim = SandSim(30, 30)..setLedge(10, 20, 19, 25);
+    expect(sim.typeAt(15, 21), Mat.ledge);
+    expect(sim.typeAt(10, 20), Mat.empty, reason: 'rounded ends');
+    for (var i = 0; i < 300; i++) {
+      if (i < 120) sim.set(15, 0, Mat.sand);
+      sim.step();
+    }
+    expect(sim.typeAt(15, 19), Mat.sand, reason: 'resting on top');
+    var spilled = 0;
+    for (var x = 0; x < 30; x++) {
+      if (sim.typeAt(x, 29) == Mat.sand) spilled++;
+    }
+    expect(spilled, greaterThan(0), reason: 'some pour off the ends');
+
+    // The ledge survives clearing and the eraser, and is never drawn.
+    sim.paintCircle(15, 21, 5, Mat.empty);
+    sim.clear();
+    expect(sim.typeAt(15, 21), Mat.ledge);
+    sim.render();
+    expect(sim.pixels[sim.index(15, 21)], SandSim.background);
+  });
 }

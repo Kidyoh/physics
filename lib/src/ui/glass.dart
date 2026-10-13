@@ -2,14 +2,14 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
-/// Backdrop treatment shared by every glass panel: boost the saturation of
-/// what's behind, dim it slightly for legibility, then blur.
+/// Backdrop treatment for liquid glass: a light blur that keeps what's
+/// behind recognisable, with boosted saturation so colours glow through.
 final ui.ImageFilter _glassFilter = ui.ImageFilter.compose(
-  outer: ui.ImageFilter.blur(sigmaX: 22, sigmaY: 22, tileMode: TileMode.mirror),
-  inner: ColorFilter.matrix(_saturateAndDim(1.7, 0.62)),
+  outer: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12, tileMode: TileMode.mirror),
+  inner: ColorFilter.matrix(_saturate(1.9, 0.92)),
 );
 
-List<double> _saturateAndDim(double s, double b) {
+List<double> _saturate(double s, double b) {
   const lr = 0.2126, lg = 0.7152, lb = 0.0722;
   final sr = (1 - s) * lr, sg = (1 - s) * lg, sb = (1 - s) * lb;
   return [
@@ -20,52 +20,48 @@ List<double> _saturateAndDim(double s, double b) {
   ];
 }
 
-/// A frosted-glass panel: blurred, colour-boosted backdrop, a faint sheen,
-/// a light-catching edge and a soft drop shadow. An optional [glow] tints the
-/// edge and shadow with an accent colour.
-class Glass extends StatelessWidget {
-  const Glass({
+/// iOS 26-style liquid glass: a clear, lightly blurred surface with a bright
+/// rim that catches the light from the top left, a soft top sheen and a
+/// floating shadow. [radius] defaults to a full capsule; [tint] washes the
+/// glass with a colour (used for selected and "on" states).
+class LiquidGlass extends StatelessWidget {
+  const LiquidGlass({
     super.key,
     required this.child,
-    this.radius = 24,
+    this.radius,
     this.padding = EdgeInsets.zero,
-    this.glow,
+    this.tint,
   });
 
   final Widget child;
-  final double radius;
+
+  /// Corner radius; `null` makes a capsule (or a circle for square content).
+  final double? radius;
   final EdgeInsets padding;
-  final Color? glow;
+  final Color? tint;
 
   @override
   Widget build(BuildContext context) {
-    final r = BorderRadius.circular(radius);
+    final ShapeBorder shape = radius == null
+        ? const StadiumBorder()
+        : RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius!));
     return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: r,
-        boxShadow: [
-          const BoxShadow(color: Color(0x66000000), blurRadius: 30, offset: Offset(0, 14)),
-          if (glow != null)
-            BoxShadow(color: glow!.withValues(alpha: 0.22), blurRadius: 26, spreadRadius: -6),
+      decoration: ShapeDecoration(
+        shape: shape,
+        shadows: [
+          const BoxShadow(color: Color(0x47000000), blurRadius: 24, offset: Offset(0, 10)),
+          if (tint != null)
+            BoxShadow(color: tint!.withValues(alpha: 0.3), blurRadius: 22, spreadRadius: -4),
         ],
       ),
-      child: ClipRRect(
-        borderRadius: r,
+      child: ClipPath(
+        clipper: ShapeBorderClipper(shape: shape),
         child: BackdropFilter.grouped(
           filter: _glassFilter,
           child: CustomPaint(
-            foregroundPainter: _GlassEdgePainter(radius, glow),
-            child: DecoratedBox(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [Color(0x26FFFFFF), Color(0x0AFFFFFF), Color(0x14FFFFFF)],
-                  stops: [0, 0.55, 1],
-                ),
-              ),
-              child: Padding(padding: padding, child: child),
-            ),
+            painter: _GlassBodyPainter(shape, tint),
+            foregroundPainter: _GlassRimPainter(shape),
+            child: Padding(padding: padding, child: child),
           ),
         ),
       ),
@@ -73,37 +69,105 @@ class Glass extends StatelessWidget {
   }
 }
 
-class _GlassEdgePainter extends CustomPainter {
-  _GlassEdgePainter(this.radius, this.glow);
+/// Body: a faint dark base for legibility, optional tint, and a sheen that
+/// fades out towards the middle.
+class _GlassBodyPainter extends CustomPainter {
+  _GlassBodyPainter(this.shape, this.tint);
 
-  final double radius;
-  final Color? glow;
+  final ShapeBorder shape;
+  final Color? tint;
 
   @override
   void paint(Canvas canvas, Size size) {
     final rect = Offset.zero & size;
-    final rrect = RRect.fromRectAndRadius(rect.deflate(0.5), Radius.circular(radius - 0.5));
-    final tint = glow ?? Colors.white;
-    canvas.drawRRect(
-      rrect,
+    final path = shape.getOuterPath(rect);
+    canvas.drawPath(path, Paint()..color = const Color(0x2E0A0A14));
+    if (tint != null) canvas.drawPath(path, Paint()..color = tint!.withValues(alpha: 0.32));
+    canvas.drawPath(
+      path,
       Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1
-        ..shader = LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.white.withValues(alpha: 0.42),
-            Colors.white.withValues(alpha: 0.06),
-            tint.withValues(alpha: glow == null ? 0.14 : 0.45),
-          ],
-          stops: const [0, 0.5, 1],
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0x33FFFFFF), Color(0x08FFFFFF), Color(0x00FFFFFF), Color(0x0FFFFFFF)],
+          stops: [0, 0.42, 0.7, 1],
         ).createShader(rect),
     );
   }
 
   @override
-  bool shouldRepaint(_GlassEdgePainter old) => old.radius != radius || old.glow != glow;
+  bool shouldRepaint(_GlassBodyPainter old) => old.tint != tint || old.shape != shape;
+}
+
+/// Rim: bright on the top-left edge, nearly gone along the sides, and a
+/// softer bounce light on the bottom-right.
+class _GlassRimPainter extends CustomPainter {
+  _GlassRimPainter(this.shape);
+
+  final ShapeBorder shape;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final path = shape.getOuterPath(rect.deflate(0.6));
+    canvas.drawPath(
+      path,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2
+        ..shader = const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xC8FFFFFF), Color(0x24FFFFFF), Color(0x0AFFFFFF), Color(0x5CFFFFFF)],
+          stops: [0, 0.3, 0.62, 1],
+        ).createShader(rect),
+    );
+    // A thin inner line just inside the rim gives the glass its thickness.
+    canvas.drawPath(
+      shape.getOuterPath(rect.deflate(2)),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..color = const Color(0x12FFFFFF),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_GlassRimPainter old) => old.shape != shape;
+}
+
+/// The lighter "lens" that slides behind the selected item of a glass bar.
+class GlassLens extends StatelessWidget {
+  const GlassLens({super.key, this.tint});
+
+  final Color? tint;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: ShapeDecoration(
+        shape: StadiumBorder(side: BorderSide(color: Colors.white.withValues(alpha: 0.28))),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color.alphaBlend(
+              (tint ?? Colors.white).withValues(alpha: 0.32),
+              Colors.white.withValues(alpha: 0.2),
+            ),
+            Color.alphaBlend(
+              (tint ?? Colors.white).withValues(alpha: 0.22),
+              Colors.white.withValues(alpha: 0.06),
+            ),
+          ],
+        ),
+        shadows: [
+          if (tint != null)
+            BoxShadow(color: tint!.withValues(alpha: 0.45), blurRadius: 16, spreadRadius: -4),
+        ],
+      ),
+    );
+  }
 }
 
 /// Shrinks slightly while pressed, like a physical button.
@@ -152,7 +216,12 @@ class Orb extends StatelessWidget {
     this.size = 34,
     this.child,
     this.gradient,
+    this.ring = true,
   });
+
+  /// Whether selection is shown with a white ring and glow (otherwise only
+  /// the size changes, for use on top of a [GlassLens]).
+  final bool ring;
 
   final Color color;
   final bool selected;
@@ -174,16 +243,16 @@ class Orb extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         border: Border.all(
-          color: selected ? Colors.white.withValues(alpha: 0.9) : Colors.transparent,
+          color: selected && ring ? Colors.white.withValues(alpha: 0.9) : Colors.transparent,
           width: 1.6,
         ),
         boxShadow: [
-          if (selected)
+          if (selected && ring)
             BoxShadow(color: color.withValues(alpha: 0.55), blurRadius: 18, spreadRadius: 1),
         ],
       ),
       child: AnimatedScale(
-        scale: selected ? 1 : 0.86,
+        scale: selected ? (ring ? 1 : 1.08) : 0.86,
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOutBack,
         child: Container(

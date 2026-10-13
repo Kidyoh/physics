@@ -15,10 +15,15 @@ void main() {
     await tester.pumpWidget(const TactileApp(showIntro: false));
     await tester.pump(const Duration(milliseconds: 50));
 
+    final semantics = tester.ensureSemantics();
     expect(find.text('Sand'), findsWidgets);
-    for (final label in ['Water', 'Fire', 'Oil']) {
-      expect(find.text(label), findsOneWidget);
+    for (final label in ['Water', 'Fire', 'Oil', 'Wall', 'Erase']) {
+      expect(find.bySemanticsLabel(label), findsOneWidget);
     }
+    await tester.tap(find.bySemanticsLabel('Water'));
+    await tester.pump(const Duration(milliseconds: 100));
+    // Brush size is a vertical fill slider.
+    expect(find.bySemanticsLabel('Brush size'), findsOneWidget);
 
     // Paint a stroke on the sand canvas.
     final gesture = await tester.startGesture(const Offset(180, 400));
@@ -30,19 +35,22 @@ void main() {
 
     await tester.tap(find.byIcon(Icons.water_drop_rounded));
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('Fluid'), findsOneWidget);
-    expect(find.text('Rainbow'), findsOneWidget);
+    expect(find.bySemanticsLabel('Rainbow'), findsOneWidget);
+    expect(find.bySemanticsLabel('Swirl'), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.flag_rounded));
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('Tear'), findsOneWidget);
-    await tester.tap(find.text('Tear'));
+    expect(find.bySemanticsLabel('Tear'), findsOneWidget);
+    await tester.tap(find.bySemanticsLabel('Tear'));
     await tester.pump(const Duration(milliseconds: 16));
 
     await tester.tap(find.byTooltip('Pause'));
     await tester.pump(const Duration(milliseconds: 250));
     expect(find.byTooltip('Play'), findsOneWidget);
+    // Let the tool label time out.
+    await tester.pump(const Duration(seconds: 2));
     expect(tester.takeException(), isNull);
+    semantics.dispose();
   });
 
   testWidgets('chrome fits on a narrow 320dp phone', (tester) async {

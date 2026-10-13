@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -14,9 +16,16 @@ import 'sand/sand_view.dart';
 import 'ui/glass.dart';
 import 'ui/intro.dart';
 
-const double _topBarHeight = 8 + 48;
-const double _dockMargin = 12;
-const EdgeInsets _dockPadding = EdgeInsets.fromLTRB(8, 12, 8, 6);
+/// Screen margin around floating controls.
+const double _edge = 14;
+
+/// Height of a glass bar: 44pt items plus 4pt padding top and bottom.
+const double _barHeight = 52;
+const double _topBarHeight = 8 + _barHeight;
+
+/// Springy curve for anything that slides: overshoots a touch, like a
+/// liquid settling.
+const Curve _liquid = Cubic(0.2, 1.25, 0.35, 1);
 
 class TactileApp extends StatelessWidget {
   const TactileApp({super.key, this.showIntro = true});
@@ -139,6 +148,7 @@ class _SandboxPageState extends State<SandboxPage> with SingleTickerProviderStat
 
   @override
   Widget build(BuildContext context) {
+    final pad = MediaQuery.paddingOf(context);
     return Scaffold(
       body: BackdropGroup(
         child: Stack(
@@ -155,17 +165,24 @@ class _SandboxPageState extends State<SandboxPage> with SingleTickerProviderStat
                       index: _mode.index,
                       sizing: StackFit.expand,
                       children: [
+                        // The canvas runs edge to edge; grains settle just
+                        // above the home indicator and the controls float
+                        // over them.
                         _canvas(
                           Mode.sand,
-                          SandView(controller: _sand, floorInset: _dockInset(_SandPanel.height)),
+                          SandView(
+                            controller: _sand,
+                            floorInset: pad.bottom,
+                            ledge: _chrome ? _sandBarRect(MediaQuery.sizeOf(context), pad) : null,
+                          ),
                         ),
                         _canvas(Mode.fluid, FluidView(controller: _fluid)),
                         _canvas(
                           Mode.cloth,
                           ClothView(
                             controller: _cloth,
-                            topInset: MediaQuery.paddingOf(context).top + _topBarHeight,
-                            floorInset: _dockInset(_ClothPanel.height),
+                            topInset: pad.top + _topBarHeight,
+                            floorInset: pad.bottom + 6,
                           ),
                         ),
                       ],
@@ -200,11 +217,15 @@ class _SandboxPageState extends State<SandboxPage> with SingleTickerProviderStat
     );
   }
 
-  /// Distance from the bottom of the screen to the top of the dock when it
-  /// holds a panel of [panelHeight]. Every dock row has a fixed height, so
-  /// this is exact.
-  double _dockInset(double panelHeight) =>
-      MediaQuery.paddingOf(context).bottom + _dockMargin + _dockPadding.vertical + panelHeight;
+  /// Where the sand tool bar sits on screen, so grains can pile on it. The
+  /// bar has a fixed natural size and is only ever scaled down to fit.
+  Rect _sandBarRect(Size screen, EdgeInsets pad) {
+    final natural = Size(_SandBar.naturalWidth, _barHeight);
+    final s = math.min(1.0, (screen.width - 2 * _edge) / natural.width);
+    final w = natural.width * s, h = natural.height * s;
+    final bottom = screen.height - pad.bottom - _edge;
+    return Rect.fromLTWH((screen.width - w) / 2, bottom - h, w, h);
+  }
 
   Widget _canvas(Mode m, Widget view) => TickerMode(
     enabled: _mode == m,
@@ -212,10 +233,15 @@ class _SandboxPageState extends State<SandboxPage> with SingleTickerProviderStat
   );
 
   Widget _chromeLayer(Color accent) {
+    final pad = MediaQuery.paddingOf(context);
+    // Edge sliders sit just above the bottom bar.
+    final sliderBottom = pad.bottom + _edge + _barHeight + 20;
     return Stack(
       fit: StackFit.expand,
       children: [
         _Hint(controller: _active, text: _mode.hint, visible: _chrome),
+
+        // Top: mode bar on the left, actions on the right.
         Positioned(
           left: 0,
           right: 0,
@@ -226,14 +252,15 @@ class _SandboxPageState extends State<SandboxPage> with SingleTickerProviderStat
             child: SafeArea(
               bottom: false,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+                padding: const EdgeInsets.fromLTRB(_edge, 8, _edge, 0),
                 child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Flexible(
                       child: FittedBox(
                         fit: BoxFit.scaleDown,
                         alignment: Alignment.centerLeft,
-                        child: _ModeSwitcher(mode: _mode, accent: accent, onMode: _setMode),
+                        child: _ModeBar(mode: _mode, accent: accent, onMode: _setMode),
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -244,60 +271,71 @@ class _SandboxPageState extends State<SandboxPage> with SingleTickerProviderStat
             ),
           ),
         ),
+
+        // Edge sliders.
+        Positioned(
+          right: _edge,
+          bottom: sliderBottom,
+          child: _Reveal(visible: _chrome, from: const Offset(0.8, 0), child: _sliderFor(accent)),
+        ),
+        if (_mode == Mode.fluid)
+          Positioned(
+            left: _edge,
+            bottom: sliderBottom,
+            child: _Reveal(
+              visible: _chrome,
+              from: const Offset(-0.8, 0),
+              child: _FillSlider(
+                label: 'Swirl',
+                icon: Icons.cyclone_rounded,
+                value: _fluid.swirl,
+                min: 0,
+                max: 60,
+                accent: accent,
+                onChanged: (v) => _fluid.swirl = v,
+              ),
+            ),
+          ),
+
+        // Bottom: the tool bar, with a label that pops up on change.
         Positioned(
           left: 0,
           right: 0,
           bottom: 0,
           child: _Reveal(
             visible: _chrome,
-            from: const Offset(0, 0.6),
+            from: const Offset(0, 0.8),
             child: SafeArea(
               top: false,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 0, 14, _dockMargin),
-                child: Glass(
-                  radius: 30,
-                  glow: accent,
-                  padding: _dockPadding,
-                  child: AnimatedSize(
-                    duration: const Duration(milliseconds: 320),
-                    curve: Curves.easeOutCubic,
-                    alignment: Alignment.bottomCenter,
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 260),
-                      switchInCurve: Curves.easeOutCubic,
-                      switchOutCurve: Curves.easeInCubic,
-                      layoutBuilder: (current, previous) =>
-                          Stack(alignment: Alignment.topCenter, children: [...previous, ?current]),
+                padding: const EdgeInsets.fromLTRB(_edge, 0, _edge, _edge),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _ToolToast(text: _toolLabel(), color: accent),
+                    const SizedBox(height: 10),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 280),
+                      switchInCurve: _liquid,
+                      switchOutCurve: Curves.easeIn,
                       transitionBuilder: (child, anim) => FadeTransition(
                         opacity: anim,
-                        child: SlideTransition(
-                          position: Tween(
-                            begin: const Offset(0, 0.12),
-                            end: Offset.zero,
-                          ).animate(anim),
+                        child: ScaleTransition(
+                          scale: Tween(begin: 0.9, end: 1.0).animate(anim),
                           child: child,
                         ),
                       ),
-                      child: switch (_mode) {
-                        Mode.sand => _SandPanel(
-                          key: const ValueKey('sand'),
-                          controller: _sand,
-                          accent: accent,
-                        ),
-                        Mode.fluid => _FluidPanel(
-                          key: const ValueKey('fluid'),
-                          controller: _fluid,
-                          accent: accent,
-                        ),
-                        Mode.cloth => _ClothPanel(
-                          key: const ValueKey('cloth'),
-                          controller: _cloth,
-                          accent: accent,
-                        ),
-                      },
+                      child: FittedBox(
+                        key: ValueKey(_mode),
+                        fit: BoxFit.scaleDown,
+                        child: switch (_mode) {
+                          Mode.sand => _SandBar(controller: _sand),
+                          Mode.fluid => _FluidBar(controller: _fluid),
+                          Mode.cloth => _ClothBar(controller: _cloth, accent: accent),
+                        },
+                      ),
                     ),
-                  ),
+                  ],
                 ),
               ),
             ),
@@ -306,10 +344,38 @@ class _SandboxPageState extends State<SandboxPage> with SingleTickerProviderStat
       ],
     );
   }
+
+  String _toolLabel() => switch (_mode) {
+    Mode.sand => _sand.tool.label,
+    Mode.fluid => _fluid.palette.label,
+    Mode.cloth => _cloth.tool == ClothTool.grab ? 'Grab' : 'Tear',
+  };
+
+  Widget _sliderFor(Color accent) => switch (_mode) {
+    Mode.sand => _FillSlider(
+      label: 'Brush size',
+      icon: Icons.brush_rounded,
+      value: _sand.brush,
+      min: 1,
+      max: 12,
+      accent: accent,
+      onChanged: (v) => _sand.brush = v,
+    ),
+    Mode.fluid => _FillSlider(
+      label: 'Brush size',
+      icon: Icons.brush_rounded,
+      value: _fluid.brush,
+      min: 0.015,
+      max: 0.09,
+      accent: accent,
+      onChanged: (v) => _fluid.brush = v,
+    ),
+    Mode.cloth => const SizedBox.shrink(),
+  };
 }
 
 // -----------------------------------------------------------------------------
-// Chrome
+// Building blocks
 // -----------------------------------------------------------------------------
 
 /// Slides and fades chrome in once the intro hands over.
@@ -326,11 +392,11 @@ class _Reveal extends StatelessWidget {
       ignoring: !visible,
       child: AnimatedSlide(
         offset: visible ? Offset.zero : from,
-        duration: const Duration(milliseconds: 650),
-        curve: Curves.easeOutCubic,
+        duration: const Duration(milliseconds: 700),
+        curve: _liquid,
         child: AnimatedOpacity(
           opacity: visible ? 1 : 0,
-          duration: const Duration(milliseconds: 500),
+          duration: const Duration(milliseconds: 450),
           child: child,
         ),
       ),
@@ -347,16 +413,127 @@ class _Vignette extends StatelessWidget {
       decoration: BoxDecoration(
         gradient: RadialGradient(
           radius: 1.15,
-          colors: [Color(0x00000000), Color(0x8C000000)],
-          stops: [0.55, 1],
+          colors: [Color(0x00000000), Color(0x80000000)],
+          stops: [0.6, 1],
         ),
       ),
     );
   }
 }
 
-class _ModeSwitcher extends StatelessWidget {
-  const _ModeSwitcher({required this.mode, required this.accent, required this.onMode});
+/// A glass capsule of equal-width items with a lens that slides, with a
+/// little spring, behind the selected one.
+class _LensBar extends StatelessWidget {
+  const _LensBar({
+    required this.count,
+    required this.selected,
+    required this.itemWidth,
+    required this.labels,
+    required this.onSelect,
+    required this.itemBuilder,
+    this.lensTint,
+  });
+
+  final int count;
+
+  /// Index of the selected item, or -1 for none.
+  final int selected;
+  final double itemWidth;
+  final List<String> labels;
+  final ValueChanged<int> onSelect;
+  final Widget Function(BuildContext context, int index, bool selected) itemBuilder;
+  final Color? lensTint;
+
+  static const double _itemHeight = _barHeight - 8;
+
+  @override
+  Widget build(BuildContext context) {
+    return LiquidGlass(
+      padding: const EdgeInsets.all(4),
+      child: SizedBox(
+        width: itemWidth * count,
+        height: _itemHeight,
+        child: Stack(
+          children: [
+            if (selected >= 0)
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 460),
+                curve: _liquid,
+                left: selected * itemWidth,
+                top: 0,
+                width: itemWidth,
+                height: _itemHeight,
+                child: TweenAnimationBuilder<Color?>(
+                  tween: ColorTween(end: lensTint),
+                  duration: const Duration(milliseconds: 300),
+                  builder: (context, tint, _) => GlassLens(tint: tint),
+                ),
+              ),
+            Row(
+              children: [
+                for (var i = 0; i < count; i++)
+                  SizedBox(
+                    width: itemWidth,
+                    height: _itemHeight,
+                    child: Semantics(
+                      button: true,
+                      selected: i == selected,
+                      label: labels[i],
+                      excludeSemantics: true,
+                      child: Pressable(
+                        onTap: () {
+                          HapticFeedback.selectionClick();
+                          onSelect(i);
+                        },
+                        child: Center(child: itemBuilder(context, i, i == selected)),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Icon over a small label, tab-bar style.
+class _IconLabel extends StatelessWidget {
+  const _IconLabel({required this.icon, required this.label, required this.selected});
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = selected ? Colors.white : Colors.white.withValues(alpha: 0.7);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 19, color: c),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          maxLines: 1,
+          style: DefaultTextStyle.of(context).style.merge(
+            TextStyle(
+              fontSize: 10.5,
+              height: 1.1,
+              letterSpacing: 0.1,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+              color: selected ? Colors.white : Colors.white.withValues(alpha: 0.7),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ModeBar extends StatelessWidget {
+  const _ModeBar({required this.mode, required this.accent, required this.onMode});
 
   final Mode mode;
   final Color accent;
@@ -364,98 +541,15 @@ class _ModeSwitcher extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Glass(
-      radius: 24,
-      padding: const EdgeInsets.all(4),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (final m in Mode.values)
-            _ModeSegment(mode: m, selected: m == mode, accent: accent, onTap: () => onMode(m)),
-        ],
-      ),
-    );
-  }
-}
-
-class _ModeSegment extends StatelessWidget {
-  const _ModeSegment({
-    required this.mode,
-    required this.selected,
-    required this.accent,
-    required this.onTap,
-  });
-
-  final Mode mode;
-  final bool selected;
-  final Color accent;
-  final VoidCallback onTap;
-
-  static const _duration = Duration(milliseconds: 340);
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: mode.label,
-      child: Pressable(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: _duration,
-          curve: Curves.easeOutCubic,
-          height: 40,
-          padding: EdgeInsets.symmetric(horizontal: selected ? 15 : 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            gradient: selected
-                ? LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.white.withValues(alpha: 0.2),
-                      Colors.white.withValues(alpha: 0.08),
-                    ],
-                  )
-                : null,
-            border: Border.all(
-              color: selected ? Colors.white.withValues(alpha: 0.22) : Colors.transparent,
-            ),
-            boxShadow: [
-              if (selected)
-                BoxShadow(color: accent.withValues(alpha: 0.4), blurRadius: 16, spreadRadius: -5),
-            ],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                mode.icon,
-                size: 19,
-                color: selected ? accent : Colors.white.withValues(alpha: 0.6),
-              ),
-              AnimatedSize(
-                duration: _duration,
-                curve: Curves.easeOutCubic,
-                child: selected
-                    ? Padding(
-                        padding: const EdgeInsets.only(left: 7),
-                        child: Text(
-                          mode.label,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0.2,
-                          ),
-                        ),
-                      )
-                    : const SizedBox.shrink(),
-              ),
-            ],
-          ),
-        ),
-      ),
+    return _LensBar(
+      count: Mode.values.length,
+      selected: mode.index,
+      itemWidth: 64,
+      labels: [for (final m in Mode.values) '${m.label} mode'],
+      lensTint: accent.withValues(alpha: 0.55),
+      onSelect: (i) => onMode(Mode.values[i]),
+      itemBuilder: (context, i, selected) =>
+          _IconLabel(icon: Mode.values[i].icon, label: Mode.values[i].label, selected: selected),
     );
   }
 }
@@ -469,40 +563,45 @@ class _Actions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Glass(
-      radius: 24,
-      padding: const EdgeInsets.all(4),
-      child: ListenableBuilder(
-        listenable: controller,
-        builder: (context, _) => Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _FpsBadge(fps: controller.fps),
-            _RoundButton(
-              tooltip: controller.paused ? 'Play' : 'Pause',
-              onTap: () {
-                HapticFeedback.selectionClick();
-                controller.paused = !controller.paused;
-              },
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 200),
-                transitionBuilder: (c, a) => ScaleTransition(scale: a, child: c),
-                child: Icon(
-                  controller.paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
-                  key: ValueKey(controller.paused),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        LiquidGlass(
+          padding: const EdgeInsets.all(4),
+          child: ListenableBuilder(
+            listenable: controller,
+            builder: (context, _) => Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _RoundButton(
+                  tooltip: controller.paused ? 'Play' : 'Pause',
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    controller.paused = !controller.paused;
+                  },
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    transitionBuilder: (c, a) => ScaleTransition(scale: a, child: c),
+                    child: Icon(
+                      controller.paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                      key: ValueKey(controller.paused),
+                    ),
+                  ),
                 ),
-              ),
+                _ResetButton(controller: controller),
+                _RoundButton(
+                  key: shareKey,
+                  tooltip: 'Share',
+                  onTap: onShare,
+                  child: const Icon(Icons.ios_share_rounded),
+                ),
+              ],
             ),
-            _ResetButton(controller: controller),
-            _RoundButton(
-              key: shareKey,
-              tooltip: 'Share',
-              onTap: onShare,
-              child: const Icon(Icons.ios_share_rounded),
-            ),
-          ],
+          ),
         ),
-      ),
+        const SizedBox(height: 6),
+        _FpsLabel(fps: controller.fps),
+      ],
     );
   }
 }
@@ -522,10 +621,10 @@ class _RoundButton extends StatelessWidget {
         onTap: onTap,
         scale: 0.85,
         child: SizedBox(
-          width: 40,
-          height: 40,
+          width: 44,
+          height: 44,
           child: IconTheme(
-            data: IconThemeData(size: 21, color: Colors.white.withValues(alpha: 0.92)),
+            data: const IconThemeData(size: 21, color: Colors.white),
             child: Center(child: child),
           ),
         ),
@@ -534,7 +633,7 @@ class _RoundButton extends StatelessWidget {
   }
 }
 
-/// Reset with a little full spin of its icon.
+/// Reset with a full spin of its icon.
 class _ResetButton extends StatefulWidget {
   const _ResetButton({required this.controller});
 
@@ -558,16 +657,16 @@ class _ResetButtonState extends State<_ResetButton> {
       },
       child: AnimatedRotation(
         turns: _turns,
-        duration: const Duration(milliseconds: 500),
-        curve: Curves.easeOutCubic,
+        duration: const Duration(milliseconds: 600),
+        curve: _liquid,
         child: const Icon(Icons.refresh_rounded),
       ),
     );
   }
 }
 
-class _FpsBadge extends StatelessWidget {
-  const _FpsBadge({required this.fps});
+class _FpsLabel extends StatelessWidget {
+  const _FpsLabel({required this.fps});
 
   final ValueListenable<int> fps;
 
@@ -576,36 +675,225 @@ class _FpsBadge extends StatelessWidget {
     return ValueListenableBuilder<int>(
       valueListenable: fps,
       builder: (context, value, _) {
-        final good = value >= 55;
-        final color = good ? const Color(0xFF6BEA8E) : const Color(0xFFFFB347);
+        final color = value >= 55 ? const Color(0xFF6BEA8E) : const Color(0xFFFFB347);
         return Padding(
-          padding: const EdgeInsets.only(left: 10, right: 4),
+          padding: const EdgeInsets.only(right: 10),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 6,
-                height: 6,
+                width: 5,
+                height: 5,
                 decoration: BoxDecoration(
                   color: color,
                   shape: BoxShape.circle,
-                  boxShadow: [BoxShadow(color: color.withValues(alpha: 0.8), blurRadius: 6)],
+                  boxShadow: [BoxShadow(color: color.withValues(alpha: 0.8), blurRadius: 5)],
                 ),
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 5),
               Text(
-                '$value',
+                '$value fps',
                 style: TextStyle(
-                  fontSize: 11.5,
+                  fontSize: 10.5,
                   fontWeight: FontWeight.w600,
-                  color: Colors.white.withValues(alpha: 0.75),
+                  letterSpacing: 0.3,
+                  color: Colors.white.withValues(alpha: 0.6),
                   fontFeatures: const [FontFeature.tabularFigures()],
+                  shadows: const [Shadow(color: Color(0x99000000), blurRadius: 4)],
                 ),
               ),
             ],
           ),
         );
       },
+    );
+  }
+}
+
+/// Control Center-style vertical slider: the glass capsule fills from the
+/// bottom with the accent colour. Drag anywhere on it.
+class _FillSlider extends StatefulWidget {
+  const _FillSlider({
+    required this.label,
+    required this.icon,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.accent,
+    required this.onChanged,
+  });
+
+  final String label;
+  final IconData icon;
+  final double value, min, max;
+  final Color accent;
+  final ValueChanged<double> onChanged;
+
+  static const double width = 48, height = 150;
+
+  @override
+  State<_FillSlider> createState() => _FillSliderState();
+}
+
+class _FillSliderState extends State<_FillSlider> {
+  int _lastTick = -1;
+  bool _active = false;
+
+  double get _t => ((widget.value - widget.min) / (widget.max - widget.min)).clamp(0.0, 1.0);
+
+  void _setFromLocal(Offset local) {
+    final t = (1 - local.dy / _FillSlider.height).clamp(0.0, 1.0);
+    final tick = (t * 10).round();
+    if (tick != _lastTick) {
+      _lastTick = tick;
+      HapticFeedback.selectionClick();
+    }
+    widget.onChanged(widget.min + (widget.max - widget.min) * t);
+  }
+
+  void _nudge(double dir) {
+    final step = (widget.max - widget.min) / 10;
+    widget.onChanged((widget.value + step * dir).clamp(widget.min, widget.max));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = _t;
+    String pct(double v) => '${(v.clamp(0.0, 1.0) * 100).round()}%';
+    return Semantics(
+      slider: true,
+      label: widget.label,
+      value: pct(t),
+      increasedValue: pct(t + 0.1),
+      decreasedValue: pct(t - 0.1),
+      onIncrease: () => _nudge(1),
+      onDecrease: () => _nudge(-1),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (d) => _setFromLocal(d.localPosition),
+        onVerticalDragStart: (d) {
+          setState(() => _active = true);
+          _setFromLocal(d.localPosition);
+        },
+        onVerticalDragUpdate: (d) => _setFromLocal(d.localPosition),
+        onVerticalDragEnd: (_) => setState(() => _active = false),
+        onVerticalDragCancel: () => setState(() => _active = false),
+        child: AnimatedScale(
+          scale: _active ? 1.06 : 1,
+          duration: const Duration(milliseconds: 220),
+          curve: _liquid,
+          child: LiquidGlass(
+            child: SizedBox(
+              width: _FillSlider.width,
+              height: _FillSlider.height,
+              child: Stack(
+                alignment: Alignment.bottomCenter,
+                children: [
+                  Container(
+                    height: _FillSlider.height * t,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color.lerp(widget.accent, Colors.white, 0.25)!.withValues(alpha: 0.9),
+                          widget.accent.withValues(alpha: 0.75),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    bottom: 12,
+                    child: Icon(
+                      widget.icon,
+                      size: 20,
+                      color: Colors.white,
+                      shadows: const [Shadow(color: Color(0x66000000), blurRadius: 6)],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A small glass label that pops up above the tool bar whenever the tool
+/// changes, then fades away.
+class _ToolToast extends StatefulWidget {
+  const _ToolToast({required this.text, required this.color});
+
+  final String text;
+  final Color color;
+
+  @override
+  State<_ToolToast> createState() => _ToolToastState();
+}
+
+class _ToolToastState extends State<_ToolToast> {
+  bool _show = false;
+  Timer? _timer;
+
+  @override
+  void didUpdateWidget(_ToolToast old) {
+    super.didUpdateWidget(old);
+    if (old.text != widget.text) {
+      _show = true;
+      _timer?.cancel();
+      _timer = Timer(const Duration(milliseconds: 1100), () {
+        if (mounted) setState(() => _show = false);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: AnimatedOpacity(
+        opacity: _show ? 1 : 0,
+        duration: const Duration(milliseconds: 220),
+        child: AnimatedScale(
+          scale: _show ? 1 : 0.85,
+          duration: const Duration(milliseconds: 380),
+          curve: _liquid,
+          child: LiquidGlass(
+            padding: const EdgeInsets.fromLTRB(12, 7, 14, 7),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: widget.color,
+                    shape: BoxShape.circle,
+                    boxShadow: [BoxShadow(color: widget.color, blurRadius: 6)],
+                  ),
+                ),
+                const SizedBox(width: 7),
+                Text(
+                  widget.text,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -626,19 +914,18 @@ class _Hint extends StatelessWidget {
         builder: (context, _) {
           final show = visible && !controller.touched;
           return Align(
-            alignment: const Alignment(0, 0.1),
+            alignment: const Alignment(0, 0.05),
             child: AnimatedSlide(
               offset: show ? Offset.zero : const Offset(0, 0.3),
-              duration: const Duration(milliseconds: 500),
-              curve: Curves.easeOutCubic,
+              duration: const Duration(milliseconds: 600),
+              curve: _liquid,
               child: AnimatedOpacity(
                 opacity: show ? 1 : 0,
                 duration: const Duration(milliseconds: 450),
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 320),
-                  child: Glass(
-                    radius: 22,
-                    padding: const EdgeInsets.fromLTRB(14, 12, 18, 12),
+                  child: LiquidGlass(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 20, 12),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -650,8 +937,8 @@ class _Hint extends StatelessWidget {
                             child: Text(
                               text,
                               key: ValueKey(text),
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.92),
+                              style: const TextStyle(
+                                color: Colors.white,
                                 fontSize: 14,
                                 height: 1.3,
                               ),
@@ -715,319 +1002,137 @@ class _NudgeState extends State<_Nudge> with SingleTickerProviderStateMixin {
         final dx = t < 0.6 ? Curves.easeInOut.transform(t / 0.6) * 8 : 8 * (1 - (t - 0.6) / 0.4);
         return Transform.translate(offset: Offset(dx - 4, 0), child: child);
       },
-      child: Icon(Icons.swipe_right_rounded, size: 22, color: Colors.white.withValues(alpha: 0.85)),
+      child: const Icon(Icons.swipe_right_rounded, size: 22, color: Colors.white),
     );
   }
 }
 
 // -----------------------------------------------------------------------------
-// Tool docks
+// Tool bars
 // -----------------------------------------------------------------------------
 
-const double _orbRowHeight = 70;
-const double _sliderHeight = 40;
+class _SandBar extends StatelessWidget {
+  const _SandBar({required this.controller});
 
-class _ToolOrb extends StatelessWidget {
-  const _ToolOrb({
-    required this.label,
-    required this.color,
-    required this.selected,
-    required this.onTap,
-    this.icon,
-    this.gradient,
-  });
+  static const double _itemWidth = 42;
 
-  final String label;
-  final Color color;
-  final bool selected;
-  final VoidCallback onTap;
-  final IconData? icon;
-  final Gradient? gradient;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: label,
-      excludeSemantics: true,
-      child: Pressable(
-        onTap: () {
-          HapticFeedback.selectionClick();
-          onTap();
-        },
-        child: SizedBox(
-          width: 60,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Orb(
-                color: color,
-                selected: selected,
-                gradient: gradient,
-                child: icon == null
-                    ? null
-                    : Icon(icon, size: 16, color: Colors.white.withValues(alpha: 0.95)),
-              ),
-              const SizedBox(height: 5),
-              AnimatedDefaultTextStyle(
-                duration: const Duration(milliseconds: 200),
-                style: DefaultTextStyle.of(context).style.merge(
-                  TextStyle(
-                    fontSize: 11,
-                    height: 1.2,
-                    letterSpacing: 0.2,
-                    color: selected ? Colors.white : Colors.white.withValues(alpha: 0.55),
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                  ),
-                ),
-                child: Text(label, maxLines: 1, softWrap: false, overflow: TextOverflow.fade),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Fades the ends of a horizontal scroller so it reads as "more this way".
-class _FadingEdges extends StatelessWidget {
-  const _FadingEdges({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return ShaderMask(
-      blendMode: BlendMode.dstIn,
-      shaderCallback: (bounds) => const LinearGradient(
-        colors: [Color(0x00000000), Color(0xFF000000), Color(0xFF000000), Color(0x00000000)],
-        stops: [0, 0.05, 0.95, 1],
-      ).createShader(bounds),
-      child: child,
-    );
-  }
-}
-
-class _GlassSlider extends StatelessWidget {
-  const _GlassSlider({
-    required this.leading,
-    required this.value,
-    required this.min,
-    required this.max,
-    required this.accent,
-    required this.onChanged,
-    required this.label,
-  });
-
-  final Widget leading;
-  final double value, min, max;
-  final Color accent;
-  final ValueChanged<double> onChanged;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: _sliderHeight,
-      child: Row(
-        children: [
-          SizedBox(width: 44, child: Center(child: leading)),
-          Expanded(
-            child: SliderTheme(
-              data: SliderThemeData(
-                trackHeight: 4,
-                activeTrackColor: accent,
-                inactiveTrackColor: Colors.white.withValues(alpha: 0.14),
-                thumbColor: Colors.white,
-                overlayColor: accent.withValues(alpha: 0.18),
-                thumbShape: const RoundSliderThumbShape(
-                  enabledThumbRadius: 9,
-                  elevation: 3,
-                  pressedElevation: 6,
-                ),
-                overlayShape: const RoundSliderOverlayShape(overlayRadius: 18),
-                trackShape: const RoundedRectSliderTrackShape(),
-                showValueIndicator: ShowValueIndicator.never,
-              ),
-              child: Slider(
-                value: value.clamp(min, max),
-                min: min,
-                max: max,
-                label: label,
-                semanticFormatterCallback: (_) => label,
-                onChanged: onChanged,
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-        ],
-      ),
-    );
-  }
-}
-
-/// A dot that grows with the brush size.
-class _BrushDot extends StatelessWidget {
-  const _BrushDot({required this.t, required this.color});
-
-  /// Brush size normalised to 0..1.
-  final double t;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    final d = 6 + 18 * t.clamp(0.0, 1.0);
-    return Container(
-      width: d,
-      height: d,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(
-          center: const Alignment(-0.3, -0.4),
-          colors: [Color.lerp(color, Colors.white, 0.45)!, color],
-        ),
-        boxShadow: [BoxShadow(color: color.withValues(alpha: 0.6), blurRadius: 10)],
-      ),
-    );
-  }
-}
-
-class _SandPanel extends StatelessWidget {
-  const _SandPanel({super.key, required this.controller, required this.accent});
-
-  static const double height = _orbRowHeight + _sliderHeight;
+  /// Width of the bar including its 4pt padding on each side.
+  static final double naturalWidth = sandTools.length * _itemWidth + 8;
 
   final SandController controller;
-  final Color accent;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          height: _orbRowHeight,
-          child: _FadingEdges(
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              children: [
-                for (final t in sandTools)
-                  _ToolOrb(
-                    label: t.label,
-                    color: t.color,
-                    icon: t.icon,
-                    selected: controller.material == t.material,
-                    onTap: () => controller.material = t.material,
-                  ),
-              ],
-            ),
-          ),
-        ),
-        _GlassSlider(
-          leading: _BrushDot(t: (controller.brush - 1) / 11, color: accent),
-          value: controller.brush,
-          min: 1,
-          max: 12,
-          accent: accent,
-          label: 'Brush size',
-          onChanged: (v) => controller.brush = v,
-        ),
-      ],
+    final selected = sandTools.indexWhere((t) => t.material == controller.material);
+    return _LensBar(
+      count: sandTools.length,
+      selected: selected,
+      itemWidth: _itemWidth,
+      labels: [for (final t in sandTools) t.label],
+      lensTint: controller.material == Mat.empty ? null : sandTools[selected].color,
+      onSelect: (i) => controller.material = sandTools[i].material,
+      itemBuilder: (context, i, isSelected) {
+        final t = sandTools[i];
+        return Orb(
+          color: t.color,
+          selected: isSelected,
+          ring: false,
+          size: 24,
+          child: t.icon == null ? null : Icon(t.icon, size: 13, color: Colors.white),
+        );
+      },
     );
   }
 }
 
-class _FluidPanel extends StatelessWidget {
-  const _FluidPanel({super.key, required this.controller, required this.accent});
+class _FluidBar extends StatelessWidget {
+  const _FluidBar({required this.controller});
 
   final FluidController controller;
-  final Color accent;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          height: _orbRowHeight,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              for (final p in FluidPalette.values)
-                _ToolOrb(
-                  label: p.label,
-                  color: p.swatch.first,
-                  gradient: SweepGradient(colors: [...p.swatch, p.swatch.first]),
-                  selected: controller.palette == p,
-                  onTap: () => controller.palette = p,
-                ),
-            ],
-          ),
-        ),
-        _GlassSlider(
-          leading: _BrushDot(t: (controller.brush - 0.015) / 0.075, color: accent),
-          value: controller.brush,
-          min: 0.015,
-          max: 0.09,
-          accent: accent,
-          label: 'Brush size',
-          onChanged: (v) => controller.brush = v,
-        ),
-        _GlassSlider(
-          leading: Icon(Icons.cyclone_rounded, size: 20, color: accent),
-          value: controller.swirl,
-          min: 0,
-          max: 60,
-          accent: accent,
-          label: 'Swirl',
-          onChanged: (v) => controller.swirl = v,
-        ),
-      ],
+    const palettes = FluidPalette.values;
+    return _LensBar(
+      count: palettes.length,
+      selected: controller.palette.index,
+      itemWidth: 52,
+      labels: [for (final p in palettes) p.label],
+      lensTint: controller.palette.swatch.first,
+      onSelect: (i) => controller.palette = palettes[i],
+      itemBuilder: (context, i, isSelected) {
+        final p = palettes[i];
+        return Orb(
+          color: p.swatch.first,
+          gradient: SweepGradient(colors: [...p.swatch, p.swatch.first]),
+          selected: isSelected,
+          ring: false,
+          size: 26,
+        );
+      },
     );
   }
 }
 
-class _ClothPanel extends StatelessWidget {
-  const _ClothPanel({super.key, required this.controller, required this.accent});
-
-  static const double height = 76;
+class _ClothBar extends StatelessWidget {
+  const _ClothBar({required this.controller, required this.accent});
 
   final ClothController controller;
   final Color accent;
 
+  static const _tools = [
+    (ClothTool.grab, 'Grab', Icons.pan_tool_rounded),
+    (ClothTool.tear, 'Tear', Icons.content_cut_rounded),
+  ];
+
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: height,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _ToolOrb(
-            label: 'Grab',
-            color: const Color(0xFF7D5BD6),
-            icon: Icons.pan_tool_rounded,
-            selected: controller.tool == ClothTool.grab,
-            onTap: () => controller.tool = ClothTool.grab,
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _LensBar(
+          count: _tools.length,
+          selected: controller.tool.index,
+          itemWidth: 70,
+          labels: [for (final t in _tools) t.$2],
+          lensTint: accent,
+          onSelect: (i) => controller.tool = _tools[i].$1,
+          itemBuilder: (context, i, isSelected) =>
+              _IconLabel(icon: _tools[i].$3, label: _tools[i].$2, selected: isSelected),
+        ),
+        const SizedBox(width: 10),
+        Semantics(
+          button: true,
+          toggled: controller.wind,
+          label: 'Wind',
+          excludeSemantics: true,
+          child: Pressable(
+            onTap: () {
+              HapticFeedback.selectionClick();
+              controller.wind = !controller.wind;
+            },
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              child: LiquidGlass(
+                key: ValueKey(controller.wind),
+                tint: controller.wind ? const Color(0xFF2CB8D8) : null,
+                padding: const EdgeInsets.all(4),
+                child: SizedBox(
+                  width: 70,
+                  height: _barHeight - 8,
+                  child: Center(
+                    child: _IconLabel(
+                      icon: Icons.air_rounded,
+                      label: controller.wind ? 'Wind on' : 'Wind',
+                      selected: controller.wind,
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ),
-          _ToolOrb(
-            label: 'Tear',
-            color: const Color(0xFFD9437F),
-            icon: Icons.content_cut_rounded,
-            selected: controller.tool == ClothTool.tear,
-            onTap: () => controller.tool = ClothTool.tear,
-          ),
-          _ToolOrb(
-            label: controller.wind ? 'Wind on' : 'Wind',
-            color: const Color(0xFF2C9DB8),
-            icon: Icons.air_rounded,
-            selected: controller.wind,
-            onTap: () => controller.wind = !controller.wind,
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

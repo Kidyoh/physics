@@ -14,7 +14,11 @@ abstract final class Mat {
   static const int fire = 6;
   static const int smoke = 7;
   static const int steam = 8;
-  static const int count = 9;
+
+  /// Invisible solid used for on-screen obstacles such as the floating tool
+  /// bar: grains rest on it, but it is never drawn, painted over or erased.
+  static const int ledge = 9;
+  static const int count = 10;
 
   static bool isGas(int t) => t == fire || t == smoke || t == steam;
   static bool isLiquid(int t) => t == water || t == oil;
@@ -22,10 +26,10 @@ abstract final class Mat {
 }
 
 /// Relative weights used to decide what sinks through what.
-const List<int> _density = [0, 255, 10, 6, 5, 255, 1, 1, 1];
+const List<int> _density = [0, 255, 10, 6, 5, 255, 1, 1, 1, 255];
 
 /// How far a liquid can slide sideways in a single step.
-const List<int> _dispersion = [0, 0, 0, 5, 3, 0, 0, 0, 0];
+const List<int> _dispersion = [0, 0, 0, 5, 3, 0, 0, 0, 0, 0];
 
 /// Falling-sand cellular automaton: sand, water, oil, plant, fire, smoke,
 /// steam and walls on a fixed grid, with simple reactions between them.
@@ -97,9 +101,32 @@ class SandSim {
 
   int typeAt(int x, int y) => type[index(x, y)];
 
+  /// Empties the canvas, keeping any ledge in place.
   void clear() {
-    type.fillRange(0, type.length, Mat.empty);
+    for (var i = 0; i < type.length; i++) {
+      if (type[i] != Mat.ledge) type[i] = Mat.empty;
+    }
     life.fillRange(0, life.length, 0);
+  }
+
+  /// Replaces the ledge with a capsule (stadium) spanning cells [x0]..[x1]
+  /// by [y0]..[y1]. Pass an empty range to remove it.
+  void setLedge(int x0, int y0, int x1, int y1) {
+    for (var i = 0; i < type.length; i++) {
+      if (type[i] == Mat.ledge) type[i] = Mat.empty;
+    }
+    if (x1 < x0 || y1 < y0) return;
+    final r = (y1 - y0 + 1) / 2;
+    final cy = (y0 + y1 + 1) / 2;
+    final left = x0 + r, right = x1 + 1 - r;
+    for (var y = math.max(0, y0); y <= math.min(height - 1, y1); y++) {
+      for (var x = math.max(0, x0); x <= math.min(width - 1, x1); x++) {
+        final px = x + 0.5, py = y + 0.5;
+        final nx = px < left ? left : (px > right ? right : px);
+        final dx = px - nx, dy = py - cy;
+        if (dx * dx + dy * dy <= r * r) type[index(x, y)] = Mat.ledge;
+      }
+    }
   }
 
   /// Number of cells currently holding material [t].
@@ -139,6 +166,7 @@ class SandSim {
         if (dx * dx + dy * dy > r2) continue;
         final i = index(x, y);
         final current = type[i];
+        if (current == Mat.ledge) continue;
         if (t == Mat.empty || t == Mat.wall) {
           if (current != t) set(x, y, t);
         } else if (current == Mat.empty && _rng.chance(p)) {
@@ -462,7 +490,7 @@ class SandSim {
     var glowing = 0;
     for (var i = 0; i < type.length; i++) {
       final t = type[i];
-      if (t == Mat.empty) {
+      if (t == Mat.empty || t == Mat.ledge) {
         pixels[i] = background;
         glow[i] = 0;
         continue;

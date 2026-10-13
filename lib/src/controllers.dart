@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
+import 'package:flutter/material.dart' show IconData, Icons;
 
 import 'fluid/fluid_sim.dart';
 import 'sand/sand_sim.dart';
@@ -45,21 +46,22 @@ abstract class SimController extends ChangeNotifier {
 
 /// A material the user can paint in sand mode.
 class SandTool {
-  const SandTool(this.material, this.label, this.color);
+  const SandTool(this.material, this.label, this.color, [this.icon]);
   final int material;
   final String label;
   final Color color;
+  final IconData? icon;
 }
 
 const sandTools = <SandTool>[
   SandTool(Mat.sand, 'Sand', Color(0xFFF0C27E)),
   SandTool(Mat.water, 'Water', Color(0xFF3A8CFF)),
   SandTool(Mat.fire, 'Fire', Color(0xFFFF7A1A)),
-  SandTool(Mat.oil, 'Oil', Color(0xFF7A5230)),
+  SandTool(Mat.oil, 'Oil', Color(0xFF8A5A2E)),
   SandTool(Mat.plant, 'Plant', Color(0xFF3CC45A)),
-  SandTool(Mat.steam, 'Steam', Color(0xFFC0CCDD)),
+  SandTool(Mat.steam, 'Steam', Color(0xFFB8C6DA)),
   SandTool(Mat.wall, 'Wall', Color(0xFF7D8293)),
-  SandTool(Mat.empty, 'Erase', Color(0xFF2A2A34)),
+  SandTool(Mat.empty, 'Erase', Color(0xFF4A4A5C), Icons.auto_fix_normal_rounded),
 ];
 
 class SandController extends SimController {
@@ -70,12 +72,27 @@ class SandController extends SimController {
     notifyListeners();
   }
 
+  SandTool get tool => sandTools.firstWhere((t) => t.material == _material);
+
   /// Brush radius in grid cells.
   double _brush = 3;
   double get brush => _brush;
   set brush(double value) {
     _brush = value;
     notifyListeners();
+  }
+
+  List<Offset>? _seed;
+
+  /// Queues sand grains to drop into the simulation on its next frame.
+  /// Positions are fractions (0..1) of the canvas width and height.
+  void seed(List<Offset> grains) => _seed = grains;
+
+  /// Returns and clears the queued grains.
+  List<Offset>? takeSeed() {
+    final s = _seed;
+    _seed = null;
+    return s;
   }
 }
 

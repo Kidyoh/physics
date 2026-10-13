@@ -8,13 +8,20 @@ import 'package:flutter/services.dart';
 import '../common/sim_loop.dart';
 import '../common/touch_surface.dart';
 import '../controllers.dart';
+import '../ui/backdrop.dart';
 import 'cloth_sim.dart';
 
 /// A hanging sheet of cloth you can grab, fling, and tear.
 class ClothView extends StatefulWidget {
-  const ClothView({super.key, required this.controller});
+  const ClothView({super.key, required this.controller, this.topInset = 0, this.floorInset = 0});
 
   final ClothController controller;
+
+  /// Space at the top kept clear for the toolbar; the cloth hangs below it.
+  final double topInset;
+
+  /// Height at the bottom that acts as the ground (the tool dock).
+  final double floorInset;
 
   @override
   State<ClothView> createState() => _ClothViewState();
@@ -49,15 +56,25 @@ class _ClothViewState extends State<ClothView> with SingleTickerProviderStateMix
     const cols = 34;
     final width = math.min(size.width * 0.86, 560.0);
     final spacing = width / (cols - 1);
-    final rows = ((size.height * 0.5) / spacing).floor().clamp(10, 70);
+    final top = math.max(size.height * 0.1, widget.topInset + 28);
+    final floor = size.height - widget.floorInset - 4;
+    final rows = (((floor - top) * 0.62) / spacing).floor().clamp(10, 70);
     _sim = ClothSim(
       cols: cols,
       rows: rows,
       spacing: spacing,
       originX: (size.width - width) / 2,
-      originY: size.height * 0.14,
-      floor: size.height - 4,
+      originY: top,
+      floor: floor,
     );
+  }
+
+  @override
+  void didUpdateWidget(ClothView old) {
+    super.didUpdateWidget(old);
+    if (old.topInset != widget.topInset || old.floorInset != widget.floorInset) {
+      _ensureSim(_size, force: true);
+    }
   }
 
   void _onFrame(int steps) {
@@ -132,15 +149,7 @@ class _ClothPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final dst = Offset.zero & size;
-    canvas.drawRect(
-      dst,
-      Paint()
-        ..shader = ui.Gradient.linear(Offset.zero, Offset(0, size.height), const [
-          Color(0xFF14121C),
-          Color(0xFF07070B),
-        ]),
-    );
+    paintBackdrop(canvas, size);
     final s = sim();
     if (s == null) return;
     _drawSheet(canvas, s);
@@ -222,9 +231,16 @@ class _ClothPainter extends CustomPainter {
   }
 
   void _drawPins(Canvas canvas, ClothSim s) {
-    final paint = Paint()..color = const Color(0xFFEDEDF5);
+    // Little brass pins with a highlight.
+    final halo = Paint()..color = const Color(0x40FFE3B0);
+    final head = Paint()..color = const Color(0xFFE8C27A);
+    final shine = Paint()..color = const Color(0xFFFFF6E0);
     for (var k = 0; k < s.pointCount; k++) {
-      if (s.pinned[k] != 0) canvas.drawCircle(Offset(s.x[k], s.y[k]), 3.5, paint);
+      if (s.pinned[k] == 0) continue;
+      final c = Offset(s.x[k], s.y[k]);
+      canvas.drawCircle(c, 6, halo);
+      canvas.drawCircle(c, 3.6, head);
+      canvas.drawCircle(c.translate(-1, -1), 1.2, shine);
     }
   }
 

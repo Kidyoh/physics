@@ -37,7 +37,8 @@ class SandSim {
       _updated = Uint8List(width * height),
       pixels = Uint32List(width * height),
       glow = Uint32List(width * height),
-      _rng = Rng(seed) {
+      _rng = Rng(seed),
+      _floor = height {
     _buildPalette();
   }
 
@@ -68,9 +69,27 @@ class SandSim {
   /// Number of glowing cells after the last [render].
   int glowCells = 0;
 
-  static final int background = rgba(10, 10, 16);
+  /// Colour of empty cells: fully transparent, so the view's backdrop
+  /// gradient shows through.
+  static const int background = 0;
   late final Uint32List _palette = Uint32List(Mat.count * 16);
+
+  /// [_palette] brightened, for grains whose top is exposed to open air.
+  late final Uint32List _litPalette = Uint32List(Mat.count * 16);
   late final Uint32List _firePalette = Uint32List(256);
+
+  int _floor;
+
+  /// First row that acts as solid ground. Rows from here down are never
+  /// filled, so the view can hide them behind its tool dock.
+  int get floorRow => _floor;
+  set floorRow(int row) {
+    final r = row.clamp(1, height);
+    if (r < _floor) {
+      type.fillRange(r * width, type.length, Mat.empty);
+    }
+    _floor = r;
+  }
 
   int index(int x, int y) => y * width + x;
 
@@ -112,7 +131,7 @@ class SandSim {
     final x0 = (cx - radius).floor().clamp(0, width - 1);
     final x1 = (cx + radius).ceil().clamp(0, width - 1);
     final y0 = (cy - radius).floor().clamp(0, height - 1);
-    final y1 = (cy + radius).ceil().clamp(0, height - 1);
+    final y1 = (cy + radius).ceil().clamp(0, _floor - 1);
     final p = _fillChance(t);
     for (var y = y0; y <= y1; y++) {
       for (var x = x0; x <= x1; x++) {
@@ -211,7 +230,7 @@ class SandSim {
   bool _canSlide(int dst) => dst == Mat.empty || Mat.isGas(dst);
 
   void _powder(int x, int y, int i) {
-    if (y + 1 >= height) return;
+    if (y + 1 >= _floor) return;
     final below = i + width;
     final t = type[i];
     final b = type[below];
@@ -234,7 +253,7 @@ class SandSim {
 
   void _liquid(int x, int y, int i) {
     final t = type[i];
-    if (y + 1 < height) {
+    if (y + 1 < _floor) {
       final below = i + width;
       if (_canSink(t, type[below])) {
         _swap(i, below);
@@ -391,6 +410,16 @@ class SandSim {
     for (var s = 0; s < 16; s++) {
       _palette[s] = background;
     }
+    void lit() {
+      for (var k = 0; k < _palette.length; k++) {
+        final c = _palette[k];
+        int up(int v) => (v + (255 - v) * 0.22).round();
+        _litPalette[k] = c == background
+            ? background
+            : rgba(up(c & 0xFF), up((c >> 8) & 0xFF), up((c >> 16) & 0xFF));
+      }
+    }
+
     ramp(Mat.wall, [92, 96, 110], [122, 126, 140]);
     ramp(Mat.sand, [214, 168, 92], [246, 210, 138]);
     ramp(Mat.water, [36, 112, 230], [64, 150, 255]);
@@ -399,6 +428,7 @@ class SandSim {
     ramp(Mat.smoke, [52, 52, 60], [76, 76, 86]);
     ramp(Mat.steam, [150, 165, 185], [200, 212, 228]);
     ramp(Mat.fire, [255, 120, 20], [255, 200, 60]);
+    lit();
 
     // Fire colour by remaining life: embers are deep red, fresh flames are
     // nearly white-hot.
@@ -428,9 +458,15 @@ class SandSim {
   /// Writes the current state into [pixels] and [glow].
   void render() {
     final waterShimmer = (_frame >> 3) & 15;
+    final w = width;
     var glowing = 0;
     for (var i = 0; i < type.length; i++) {
       final t = type[i];
+      if (t == Mat.empty) {
+        pixels[i] = background;
+        glow[i] = 0;
+        continue;
+      }
       if (t == Mat.fire) {
         final c = _firePalette[(life[i] + (shade[i] & 15)).clamp(0, 255)];
         pixels[i] = c;
@@ -442,21 +478,28 @@ class SandSim {
       var s = shade[i] & 15;
       if (t == Mat.water) s = (s + waterShimmer) & 15;
       if (t == Mat.smoke || t == Mat.steam) {
-        // Fade out as the vapour dissipates.
-        final c = _palette[t * 16 + s];
-        final a = (life[i] * 3).clamp(0, 255) / 255.0;
-        pixels[i] = _mix(background, c, a);
+        // Translucent, fading out as the vapour dissipates.
+        final a = (life[i] * 3).clamp(0, 255) * (t == Mat.steam ? 0.8 : 0.9);
+        pixels[i] = _withAlpha(_palette[t * 16 + s], a.round());
         continue;
       }
-      pixels[i] = _palette[t * 16 + s];
+      // Grains with open air above catch the light, so piles and water
+      // surfaces read as lit from above.
+      final above = i >= w ? type[i - w] : Mat.empty;
+      final exposed = above == Mat.empty || Mat.isGas(above);
+      pixels[i] = (exposed ? _litPalette : _palette)[t * 16 + s];
     }
     glowCells = glowing;
   }
 
-  static int _mix(int a, int b, double f) {
-    final r = ((a & 0xFF) + (((b & 0xFF) - (a & 0xFF)) * f)).round();
-    final g = (((a >> 8) & 0xFF) + ((((b >> 8) & 0xFF) - ((a >> 8) & 0xFF)) * f)).round();
-    final bl = (((a >> 16) & 0xFF) + ((((b >> 16) & 0xFF) - ((a >> 16) & 0xFF)) * f)).round();
-    return rgba(r, g, bl);
+  /// Premultiplies an opaque colour by alpha [a] (0..255).
+  static int _withAlpha(int c, int a) {
+    final f = a / 255.0;
+    return rgba(
+      ((c & 0xFF) * f).round(),
+      (((c >> 8) & 0xFF) * f).round(),
+      (((c >> 16) & 0xFF) * f).round(),
+      a,
+    );
   }
 }

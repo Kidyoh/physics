@@ -20,6 +20,18 @@ Every mode supports multi-touch, pause, reset, and **Share**, which exports a PN
 the canvas through the system share sheet. Fire and ink get an additive bloom pass.
 Tool changes trigger light haptics.
 
+### Look and feel
+
+- **Intro:** the word *Tactile* rains down out of sand grains, holds for a beat, then
+  crumbles into the live sand simulation. Tap to skip.
+- **Frosted glass chrome:** the panels blur and saturate whatever is behind them, with a
+  light-catching edge. They share one backdrop pass (`BackdropGroup`) to stay cheap.
+- **Accent colour** follows the selected material, palette or cloth tool, and tints the
+  dock's glow, sliders and mode switcher.
+- The glass dock acts as the ground: sand piles up and cloth comes to rest on top of it.
+- Glossy orb swatches, press-to-shrink buttons, a morphing mode switcher, a first-touch
+  hint, and a depth gradient with vignette behind every canvas.
+
 ## Run it
 
 ```sh
@@ -34,7 +46,8 @@ Requires Flutter 3.38+ (developed on 3.47). iOS 15+, Android minSdk from Flutter
 ```
 lib/
   main.dart                  entry point (portrait, edge-to-edge)
-  src/app.dart               shell: mode switcher, toolbars, share
+  src/app.dart               shell: mode switcher, glass docks, hint, share
+  src/ui/                    glass panels and orbs, shared backdrop, sand-title intro
   src/controllers.dart       per-mode settings shared by the toolbar and views
   src/common/                fixed-step loop, pixel-buffer → ui.Image upload, multi-touch input, RNG
   src/sand/                  SandSim (pure Dart) + SandView

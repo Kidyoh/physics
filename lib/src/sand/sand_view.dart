@@ -5,16 +5,24 @@ import 'package:flutter/material.dart';
 import '../common/sim_loop.dart';
 import '../common/touch_surface.dart';
 import '../controllers.dart';
+import '../ui/backdrop.dart';
 import 'sand_sim.dart';
 
 /// Full-screen falling-sand canvas.
 class SandView extends StatefulWidget {
-  const SandView({super.key, required this.controller});
+  const SandView({super.key, required this.controller, this.floorInset = 0});
 
   final SandController controller;
 
+  /// Height (logical px) at the bottom of the canvas that acts as solid
+  /// ground, so grains come to rest on top of the tool dock.
+  final double floorInset;
+
   /// Grid columns; rows follow from the screen's aspect ratio.
   static const int columns = 150;
+
+  /// Grid rows for a canvas of [size], keeping cells square.
+  static int rowsFor(Size size) => (columns * size.height / size.width).round().clamp(40, 600);
 
   @override
   State<SandView> createState() => _SandViewState();
@@ -48,8 +56,21 @@ class _SandViewState extends State<SandView> with SingleTickerProviderStateMixin
     if (size.isEmpty) return;
     if (_sim != null && size == _size) return;
     _size = size;
-    final rows = (SandView.columns * size.height / size.width).round().clamp(40, 600);
-    _sim = SandSim(SandView.columns, rows);
+    _sim = SandSim(SandView.columns, SandView.rowsFor(size));
+    _applyFloor();
+  }
+
+  void _applyFloor() {
+    final sim = _sim;
+    if (sim == null || _size.isEmpty) return;
+    final visible = (_size.height - widget.floorInset) / _size.height;
+    sim.floorRow = (visible * sim.height).floor();
+  }
+
+  @override
+  void didUpdateWidget(SandView old) {
+    super.didUpdateWidget(old);
+    if (old.floorInset != widget.floorInset) _applyFloor();
   }
 
   void _onFrame(int steps) {
@@ -59,6 +80,14 @@ class _SandViewState extends State<SandView> with SingleTickerProviderStateMixin
     if (c.resetCount != _seenReset) {
       _seenReset = c.resetCount;
       sim.clear();
+    }
+
+    final seed = c.takeSeed();
+    if (seed != null) {
+      for (final f in seed) {
+        final x = (f.dx * sim.width).floor(), y = (f.dy * sim.height).floor();
+        if (sim.inBounds(x, y) && sim.typeAt(x, y) == Mat.empty) sim.set(x, y, Mat.sand);
+      }
     }
 
     // Keep pouring while a finger is held still.
@@ -124,7 +153,7 @@ class _SandPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final dst = Offset.zero & size;
-    canvas.drawRect(dst, Paint()..color = const Color(0xFF0A0A10));
+    paintBackdrop(canvas, size);
     final img = image.image;
     if (img == null) return;
     final src = Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble());

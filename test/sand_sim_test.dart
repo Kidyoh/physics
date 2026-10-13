@@ -151,4 +151,23 @@ void main() {
     expect(sim.glow[15], 0);
     expect(sim.pixels[5], SandSim.background);
   });
+
+  test('grains come to rest on a raised floor', () {
+    final sim = SandSim(10, 20)..floorRow = 15;
+    sim.set(5, 0, Mat.sand);
+    run(sim, 40);
+    expect(sim.typeAt(5, 14), Mat.sand);
+    sim.paintCircle(5, 18, 3, Mat.water);
+    expect(sim.count(Mat.water), 0, reason: 'cannot paint below the floor');
+  });
+
+  test('render leaves empty cells transparent and lights exposed tops', () {
+    final sim = SandSim(1, 3)
+      ..set(0, 1, Mat.wall)
+      ..set(0, 2, Mat.wall)
+      ..render();
+    expect(sim.pixels[0], SandSim.background);
+    expect(sim.pixels[0] >> 24, 0);
+    expect(sim.pixels[1], isNot(sim.pixels[2]), reason: 'top wall cell is lit');
+  });
 }
